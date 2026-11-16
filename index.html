@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Анимация сердца</title>
+<style>
+  * { box-sizing: border-box }
+  body { margin: 0; min-height: 100svh; display: grid; place-items: center; background: #fff }
+  button {
+    position: relative; display: grid; place-items: center;
+    width: min(36rem, 75vw, 75svh); aspect-ratio: 1;
+    padding: 0; border: 0; border-radius: 20%; background: transparent;
+    color: #262626; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  button:focus-visible { outline: 3px solid #52666d; outline-offset: 6px }
+  img, .scene { position: absolute; pointer-events: none }
+  img { width: 39.5%; height: auto }
+  .scene { inset: 0; width: 100%; height: 100%; overflow: visible }
+</style>
+<button type="button" aria-label="Добавить в избранное" aria-pressed="false">
+  <img src="heart.svg" alt="">
+  <svg class="scene" viewBox="0 0 100 100" aria-hidden="true">
+    <defs>
+      <clipPath id="tile"><rect width="100" height="100" rx="20"/></clipPath>
+      <path id="branch" d="M0 0V-5M0-2-1.5-3.4M0-2 1.5-3.4M0-3.7-1.2-4.7M0-3.7 1.2-4.7"/>
+      <g id="snowflake" fill="none" stroke="#869da4" stroke-width=".67" stroke-linecap="round">
+        <use href="#branch"/><use href="#branch" transform="rotate(60)"/>
+        <use href="#branch" transform="rotate(120)"/><use href="#branch" transform="rotate(180)"/>
+        <use href="#branch" transform="rotate(240)"/><use href="#branch" transform="rotate(300)"/>
+      </g>
+    </defs>
+    <g clip-path="url(#tile)">
+      <g id="pendulum" fill="currentColor">
+        <path id="cord" d="M50-8V17 M54 22a4 4 0 1 1-8 0 4 4 0 1 1 8 0Z"
+              fill="none" stroke="currentColor" stroke-width="3.4" opacity="0"/>
+        <path id="ornament" opacity="0"/>
+      </g>
+    </g>
+    <g id="snow"></g>
+  </svg>
+</button>
+<script>
+  const button = document.querySelector('button');
+  const outline = button.querySelector('img');
+  const ornament = document.querySelector('#ornament');
+  const pendulum = document.querySelector('#pendulum');
+  const cord = document.querySelector('#cord');
+  const snow = document.querySelector('#snow');
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const heart = 'M2.6171 3.92216C5.12145 1.35928 9.19301 1.35928 11.6974 3.92216L11.9998 4.23171L12.3023 3.92216C14.8067 1.35928 18.8782 1.35928 21.3826 3.92216C23.8725 6.47026 23.8725 10.5908 21.3826 13.1389L13.2065 21.4928C12.5446 22.169 11.4559 22.1691 10.794 21.4928L2.61776 13.1396C0.127855 10.5915 0.127192 6.47026 2.6171 3.92216Z';
+  const tree = 'M11.4 1.2Q12 .2 12.6 1.2L16 7H14.5L19 12.8H17L23 19.6Q23.6 20.5 22.5 20.5H15V22Q15 23 14 23H10Q9 23 9 22V20.5H1.5Q.4 20.5 1 19.6L7 12.8H5L9.5 7H8Z';
+
+  // Resample the outlines to give every morph the same number of vertices.
+  const samplePath = document.createElementNS(ornament.namespaceURI, 'path');
+  const sampleCount = 144;
+  function sample(path, previous) {
+    samplePath.setAttribute('d', path);
+    const length = samplePath.getTotalLength();
+    let points = Array.from({length: sampleCount}, (_, i) =>
+      samplePath.getPointAtLength(length * i / sampleCount));
+    const area = points.reduce((sum, p, i) => {
+      const q = points[(i + 1) % sampleCount];
+      return sum + p.x * q.y - p.y * q.x;
+    }, 0);
+    if (area < 0) points.reverse();
+    if (!previous) return points;
+
+    let bestError = Infinity;
+    let bestOffset = 0;
+    for (let offset = 0; offset < sampleCount; offset++) {
+      const error = previous.reduce((sum, p, i) => {
+        const q = points[(i + offset) % sampleCount];
+        return sum + (p.x - q.x) ** 2 + (p.y - q.y) ** 2;
+      }, 0);
+      if (error < bestError) {
+        bestError = error;
+        bestOffset = offset;
+      }
+    }
+    return points.slice(bestOffset).concat(points.slice(0, bestOffset));
+  }
+
+  const shapes = [];
+  for (const path of [heart, tree, heart]) {
+    shapes.push(sample(path, shapes.at(-1)));
+  }
+  const transitions = [0.48, 1.22];
+
+  const flakes = [[-65,-27,1], [19,-68,.92], [65,-19,.9], [37,49,1.15], [-48,48,.84]]
+    .map(([x,y,size]) => {
+      const element = document.createElementNS(ornament.namespaceURI, 'use');
+      element.setAttribute('href', '#snowflake');
+      snow.append(element);
+      return {element,x,y,size};
+    });
+  const clamp = t => Math.min(1, Math.max(0, t));
+  const smooth = t => { t = clamp(t); return t*t*(3-2*t); };
+  const mix = (a,b,t) => a + (b-a)*t;
+  const duration = 2;
+  let selected = false;
+  let frame;
+
+  function draw(t) {
+    const settle = smooth((t - 1.62) / .38);
+    const inflate = smooth((t - .04) / .27);
+    const fill = smooth(t / .13);
+    const pink = smooth((t - 1.61) / .28);
+    let from = 0;
+    while (from < transitions.length && t >= transitions[from] + .16) from++;
+    const morph = from < transitions.length ? smooth((t - transitions[from]) / .16) : 0;
+    const to = Math.min(from + 1, shapes.length - 1);
+    if (morph === 0 && (from === 0 || from === shapes.length - 1)) {
+      ornament.setAttribute('d', heart);
+    } else {
+      const points = shapes[from].map((p,i) => {
+        const q = shapes[to][i];
+        return [mix(p.x,q.x,morph).toFixed(2), mix(p.y,q.y,morph).toFixed(2)].join(',');
+      });
+      ornament.setAttribute('d', 'M' + points.join('L') + 'Z');
+    }
+    const finalPulse = smooth((t - 1.38) / .14) * (1 - settle);
+    const scale = mix(mix(1.646, 2.38, inflate), 1.646, settle) + .23 * finalPulse;
+    const swing = Math.sin((t-.12)*12.8)*mix(11,4,smooth(t / 1.6))*inflate*(1-settle);
+    let kick = 0;
+    for (const start of transitions) {
+      const elapsed = Math.max(0,t-start);
+      kick += 8 * Math.sin(elapsed*19) * Math.exp(-elapsed*7);
+    }
+    pendulum.setAttribute('transform', `rotate(${(swing+kick)*(1-settle)} 50 1)`);
+    ornament.setAttribute('transform', `translate(50 50) scale(${scale}) translate(-12 -12)`);
+    ornament.setAttribute('fill', `rgb(${mix(38,224,pink)} ${mix(38,0,pink)} ${mix(38,99,pink)})`);
+    ornament.setAttribute('opacity', fill);
+    outline.style.opacity = 1-fill;
+    cord.setAttribute('opacity', smooth((t-.11)/.15)*(1-settle));
+    const spread = 1-(1-clamp((t-.085)/.79))**2;
+    for (const {element,x,y,size} of flakes) {
+      element.setAttribute('transform', `translate(${50+x*spread} ${48+y*spread+14*spread**2}) rotate(${x*.34+35*spread}) scale(${size*smooth(spread*5)})`);
+      element.setAttribute('opacity', smooth((t-.08)/.14)*(1-smooth((t-.57)/.32)));
+    }
+  }
+
+  button.addEventListener('click', () => {
+    cancelAnimationFrame(frame);
+    selected = !selected;
+    button.setAttribute('aria-pressed', String(selected));
+    button.setAttribute('aria-label', selected ? 'Убрать из избранного' : 'Добавить в избранное');
+    if (!selected || reducedMotion.matches) {
+      draw(selected ? duration : 0);
+      return;
+    }
+    draw(0);
+    const start = performance.now();
+    function animate(now) {
+      const t = Math.min(duration, (now-start)/1000);
+      draw(t);
+      if (t < duration) frame = requestAnimationFrame(animate);
+    }
+    frame = requestAnimationFrame(animate);
+  });
+  draw(0);
+</script>
+</html>
